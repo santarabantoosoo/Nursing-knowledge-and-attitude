@@ -1,0 +1,303 @@
+---
+title: "Nursing knowledge"
+author: "Hamza"
+date: "6/12/2022"
+output: word_document
+---
+
+*Items to be done by Hamza*
+
+- Add labels for columns 
+- Add results' interpretation 
+
+*Questions to ask miss Noura*
+
+- key for Gender, education and experience, Age
+- Can we have age as a continuous variable? 
+- Education 3 has only 1 participant, can we group it? 
+- Can we group experience into 3 groups? 
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, comment = NA, 
+                      fig.height = 8, fig.width = 8)
+#this chunk is used to silence code, warnings, comments and hash from appearing in output
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(broom)
+library(flextable)
+library(labelled)
+library(gtsummary)
+library(ggfortify) # for linear regression diagnostics
+
+theme_set(theme_classic())
+```
+
+```{r}
+data <- read_excel("../data file.xlsx", skip = 1)
+names(data) <- make.names(names(data), unique = TRUE)
+
+# change to factor
+     
+names <- c('Age' ,'experience', 'Education', 'Gender')
+data[,names] <- lapply(data[,names] , factor)
+```
+
+
+
+
+
+## Participants and descriptive data 
+
+```{r functions}
+
+rmdtbl <- function(df){
+  
+tbl_alpha <- autofit(theme_vanilla(flextable(df)))
+
+tbl_alpha <- bg(tbl_alpha, bg = "blue", part = "header")
+tbl_alpha <- color(tbl_alpha, color = "white", part = "header")
+
+
+bes <- align(tbl_alpha, align = "center")
+
+bes <- align_text_col(bes, align = "center")
+return(bes)
+
+}
+
+
+# var_label(data) <- list(
+#   rec_gender = "Recipient gender",
+#   Age.at.time.of.SCT. = 'Age', 
+#   age_bin = 'Age grouped',
+#   Recipient.s.DiagNosis = "Recipient diagnosis",
+#   Product.Type = "stem cell source",
+#   ImmuNo.prophylaxis = "GVHD prophylaxis",
+#   Antifungal.s.. = "Antifungal",
+#   Conditioning.Regimen = "Conditioning regimen"
+# )
+
+
+tbl1_sum <- data %>% 
+  dplyr::select(Age, Gender, Education, experience)
+
+tbl_summary(tbl1_sum, missing = "no")  %>% bold_labels() %>% italicize_levels() %>% gtsummary::as_flex_table() %>% 
+      set_caption(caption = "Characteristics of surveyed nurses")
+
+
+```
+
+
+
+```{r}
+
+# We can group the participants by education level or experience or gender if you wish. For example, we can do this 
+
+# tbl_summary(tbl1_sum, by = Gender, missing = "no") %>% add_p() %>% add_overall()  %>% add_n %>% bold_labels() %>% italicize_levels() %>% bold_p() %>% gtsummary::as_flex_table() 
+
+```
+
+
+## Knowledge
+
+```{r}
+data$score_knowledge <- as.numeric(data %>% 
+  dplyr::select(dplyr::starts_with('kn')) %>% 
+  rowSums())
+```
+
+
+```{r}
+
+tbl2_sum <- data %>% 
+  dplyr::select(dplyr::starts_with("kn"))
+
+tbl2_sum <- tbl2_sum %>% 
+  mutate_all(funs(str_replace(., '1', "correct"))) %>% 
+  mutate_all(funs(str_replace(., '0', "Incorrect")))
+
+
+tbl_summary(tbl2_sum, missing = "no")  %>% bold_labels() %>% italicize_levels() %>%
+  modify_header(label = "**Question**") %>% 
+gtsummary::as_flex_table() %>% 
+    set_caption(caption = "Self-reported knowledge on health research")
+
+```
+
+
+
+## Knowledge score 
+
+```{r}
+tbl3_sum <- data %>% 
+  dplyr::select(score_knowledge)
+
+tbl_summary(tbl3_sum, missing = "no", type = list(score_knowledge ~ "continuous2"), 
+            statistic = all_continuous() ~ c("{median} ({p25}, {p75})", 
+                                     "{min}, {max}"))  %>% bold_labels() %>% italicize_levels() %>%
+  modify_header(label = "**Score**") %>% 
+gtsummary::as_flex_table()
+
+
+```
+
+## Linear regression 
+
+Does conducting a research, fully or partially increase the knowledge score?
+
+```{r}
+
+# Build the model
+model <- lm(data$score_knowledge ~ p1 + experience + Education + Gender + Age , data = data)
+
+```
+
+## For appendix
+
+### Model assumptions 
+
+```{r}
+model.diag.metrics <- augment(model)
+
+```
+
+
+```{r}
+
+autoplot(model)
+```
+
+```{r}
+# Residuals vs Fitted. Used to check the linear relationship assumptions. A horizontal line, without distinct patterns is an indication for a linear relationship, what is good.
+# 
+# Normal Q-Q. Used to examine whether the residuals are normally distributed. It’s good if residuals points follow the straight dashed line.
+# 
+# Scale-Location (or Spread-Location). Used to check the homogeneity of variance of the residuals (homoscedasticity). Horizontal line with equally spread points is a good indication of homoscedasticity. This is not the case in our example, where we have a heteroscedasticity problem.
+# 
+# Residuals vs Leverage. Used to identify influential cases, that is extreme values that might influence the regression results when included or excluded from the analysis. This plot will be described further in the next sections.
+```
+
+
+### check the strange points 
+
+```{r}
+
+
+model.diag.metrics <- model.diag.metrics %>%
+  mutate(index = 1:nrow(model.diag.metrics)) %>%
+  select(index, everything(), -.sigma)
+# Inspect the data
+#head(model.diag.metrics, 4)
+```
+
+checklist for assumptions: 
+
+- Linearity : ok
+- homogenity of variance : a slight problem in fig 3 
+- Normality of resisduals : ok  
+- Influential values: A rule of thumb is that an observation has high influence if Cook’s distance exceeds 4/(n - p - 1)(P. Bruce and Bruce 2017), where n is the number of observations and p the number of predictor variables. In our case, it is 4/(100 - 10) = 0.044  
+
+#### Deeper insight into influential points 
+
+```{r}
+# Cook's distance
+plot(model, 4)
+```
+
+
+```{r}
+# Residuals vs Leverage
+plot(model, 5)
+```
+
+Let's look at these three points 
+
+```{r}
+infl_pts <- model.diag.metrics %>%
+  top_n(3, wt = .cooksd)
+
+```
+
+It seems that one participant scored better than expected and two participants scored much worse than expected. In general, the deviation is not that high. It is not even expected to be high, simply because of the capping. Maximum score is 10 and minimum is 0. 
+
+**All assumptions acceptable**
+
+# End of appendix part
+
+## Linear regression 
+
+
+```{r}
+
+# 
+# var_label(data) <- list(
+#   rec_gender = "Recipient gender",
+#   Age.at.time.of.SCT. = 'Age',
+#   age_bin = 'Age grouped',
+#   Recipient.s.DiagNosis = "Recipient diagnosis",
+#   Product.Type = "stem cell source",
+#   ImmuNo.prophylaxis = "GVHD prophylaxis",
+#   Antifungal.s.. = "Antifungal",
+#   Conditioning.Regimen = "Conditioning regimen"
+# )
+
+tbl_regression(model) %>% bold_labels() %>% italicize_levels() %>% bold_p() %>% gtsummary::as_flex_table()%>% 
+  set_caption(caption = "Linear regression [Relation with knowlegde score] ")
+ 
+
+
+
+```
+
+## Model performance
+
+```{r}
+
+mod_performance <- glance(model)
+
+ad_r_sq <- mod_performance$adj.r.squared
+```
+
+Adjusted R squared: `r ad_r_sq`
+
+
+## Attitude  
+
+```{r}
+tbl_att <- data %>% 
+  dplyr::select(dplyr::starts_with("Att"))
+
+tbl_att <- tbl_att %>% 
+  mutate_all(funs(str_replace(., '1', "correct"))) %>% 
+  mutate_all(funs(str_replace(., '0', "Incorrect")))
+
+
+tbl_summary(tbl_att, missing = "no")  %>% bold_labels() %>% italicize_levels() %>%
+  modify_header(label = "**Question**") %>% 
+  gtsummary::as_flex_table() %>% 
+  set_caption(caption = "Attitude ratings towards health research")
+   
+```
+
+
+## Practice  
+
+```{r}
+tbl_p <- data %>% 
+  dplyr::select(dplyr::starts_with("p"))
+
+# tbl_p <- tbl_p %>% 
+#   mutate_all(funs(str_replace(., '1', "correct"))) %>% 
+#   mutate_all(funs(str_replace(., '0', "Incorrect")))
+
+tbl_summary(tbl_p, missing = "no")  %>% bold_labels() %>% italicize_levels() %>%
+  modify_header(label = "**Question**") %>% 
+  gtsummary::as_flex_table() %>% 
+  set_caption(caption = "practice, conduct and utilization, of health research ")
+  
+```
